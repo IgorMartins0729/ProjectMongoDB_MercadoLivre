@@ -1,9 +1,17 @@
+import os
+from dotenv import load_dotenv
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 
-uri = "mongodb+srv://igormartins4_db_user:Wl49wDLRAQrew35A@cluster0.up0m3py.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+diretorio_atual = os.path.dirname(os.path.abspath(__file__))
+caminho_env = os.path.join(diretorio_atual, "atlas-credentials.env")
 
-# Create a new client and connect to the server
+# Carrega o arquivo
+load_dotenv(caminho_env)
+
+uri = os.getenv("MONGODB_URI")
+print("Testando a URI:", uri)
+
 client = MongoClient(uri, server_api=ServerApi('1'))
 global db
 db = client.mercadolivre
@@ -222,7 +230,7 @@ def create_compra():
     produto = input("Nome do produto: ")
     quantidade = input("Quantidade: ")
 
-    mydoc = { "usuario": usuario, "produto": produto, "quantiadade": }
+    mydoc = { "usuario": usuario, "produto": produto, "quantidade": quantidade}
     x = mycol.insert_one(mydoc)
     print("Compra inserida com ID", x.inserted_id)
 
@@ -272,7 +280,61 @@ def delete_compra(usuario):
     mydoc = mycol.delete_one(myquery)
     print("Deletada a compra. Quantidade removida: ", mydoc.deleted_count)            
 
+#===========================================================
+#===========================================================
 
+#CRUD (Favoritos) - Criar favorito
+def create_favorito():
+    global db
+    mycol = db.favoritos
+    print("\nInserindo um novo favorito")
+    usuario = input("Nome do usuário: ")
+    produto = input("Nome do produto favoritado: ")
+
+    mydoc = { "usuario": usuario, "produto": produto }
+    x = mycol.insert_one(mydoc)
+    print("Favorito inserido com ID ", x.inserted_id)
+
+#CRUD (Favoritos) - Read favorito
+def read_favorito(usuario):
+    global db
+    mycol = db.favoritos
+    print("Favoritos existentes: ")
+    if not len(usuario):
+        mydoc = mycol.find().sort("usuario")
+        for x in mydoc:
+            print(x["usuario"], "-", x.get("produto", "Sem produto"))
+    else:
+        myquery = {"usuario": usuario}
+        mydoc = mycol.find(myquery)
+        for x in mydoc:
+            print(x)
+
+#CRUD (Favoritos) - Update favorito
+def update_favorito(usuario):
+    global db
+    mycol = db.favoritos
+    myquery = {"usuario": usuario}
+    mydoc = mycol.find_one(myquery)
+    if mydoc:
+        print("Dados do favorito: ", mydoc)
+        novo_produto = input("Mudar Produto Favoritado (ou enter para pular):")
+        if len(novo_produto):
+            mydoc["produto"] = novo_produto
+
+        newvalues = { "$set": mydoc }
+        mycol.update_one(myquery, newvalues)
+        print("Favorito atualizado!")
+    else:
+        print("Favorito não encontrado.")
+
+#CRUD (Favoritos) - Delete favorito
+def delete_favorito(usuario):
+    global db
+    mycol = db.favoritos
+    myquery = {"usuario": usuario}
+    mydoc = mycol.delete_one(myquery)
+    print("Deletado o favorito. Quantidade removida: ", mydoc.deleted_count)
 
 
 
@@ -280,9 +342,11 @@ def delete_compra(usuario):
 key = 0
 sub = 0
 while (key != 'S'):
-    print("1-CRUD Usuário")
+    print("\n1-CRUD Usuário")
     print("2-CRUD Vendedor")
     print("3-CRUD Produto")
+    print("4-CRUD Compras")
+    print("5-CRUD Favoritos")
     key = input("Digite a opção desejada? (S para sair) ")
 
     if (key == '1'):
@@ -348,6 +412,47 @@ while (key != 'S'):
             update_produto(nome)
         elif (sub == '4'):
             nome = input("Delete produto, digite o nome a ser deletado: ")
-            delete_produto(nome)            
+            delete_produto(nome)      
+
+    elif (key == '4'):
+        print("========Menu de Compras=======")  
+        print("1-Create Compra")
+        print("2-Read Compra")
+        print("3-Update Compra")
+        print("4-Delete Compra") 
+        sub = input("Digite a opção desejada? (V para voltar) ")   
+
+        if (sub == '1'):
+            create_compra()
+        elif (sub == '2'):
+            nome = input("Read compra, deseja buscar por um usuário específico? (Enter para todos)")
+            read_compra(nome)
+        elif (sub == '3'):
+            nome = input("Update compra, digite o usuário da compra: ")
+            update_compra(nome)
+        elif (sub == '4'):
+            nome = input("Delete compra, digite o usuário a ser deletado: ")
+            delete_compra(nome)
+
+    elif (key == '5'):
+        print("========Menu de Favoritos=======")  
+        print("1-Create Favorito")
+        print("2-Read Favorito")
+        print("3-Update Favorito")
+        print("4-Delete Favorito") 
+        sub = input("Digite a opção desejada? (V para voltar) ")   
+
+        if (sub == '1'):
+            create_favorito()
+        elif (sub == '2'):
+            nome = input("Read favorito, deseja buscar por um usuário específico? (Enter para todos)")
+            read_favorito(nome)
+        elif (sub == '3'):
+            nome = input("Update favorito, digite o usuário do favorito: ")
+            update_favorito(nome)
+        elif (sub == '4'):
+            nome = input("Delete favorito, digite o usuário a ser deletado: ")
+            delete_favorito(nome)                      
 
 print("Tchau Prof...")
+
