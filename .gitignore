@@ -1,6 +1,2 @@
-# Ignorar o ficheiro de credenciais do MongoDB
-MongoDB/atlas-credentials.env
-
 # Regras universais de segurança para proteger ficheiros de ambiente
-/.env
-.env
+atlas-credentials.env
