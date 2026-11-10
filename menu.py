@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
@@ -40,10 +41,9 @@ def escolher(docs, mostrar):
 
 def escolher_produto():
     print("Escolha o produto:")
-    return escolher(db.produto.find().sort("nome"), lambda p: f'{p["nome"]} - {p.get("preco", "")}')
+    return escolher(db.produto.find().sort("nome"), lambda p: f'{p["nome"]} - R$ {p.get("preco", "")}')
 
-# Lista uma coleção trazendo os documentos ligados pelo _id (como um JOIN do SQL).
-# joins: [("usuario_id", "usuario"), ...] -> o resultado ganha d["usuario"] = [doc do usuário]
+# Lista uma coleção trazendo os documentos ligados pelo _id (ex: Vendedor do produto)
 def com_nomes(colecao, filtro, joins):
     pipeline = [{"$match": filtro}]
     for campo, origem in joins:
@@ -54,36 +54,10 @@ def com_nomes(colecao, filtro, joins):
 def nome_ligado(d, origem, campo="nome"):
     return d[origem][0].get(campo) if d.get(origem) else "(removido)"
 
-# Compras e favoritos têm a mesma ligação: usuário + produto
-JOINS_USUARIO_PRODUTO = [("usuario_id", "usuario"), ("produto_id", "produto")]
-
-def mostrar_usuario_produto(d):
-    texto = f'{nome_ligado(d, "usuario")} - {nome_ligado(d, "produto")}'
-    return texto + (f' - Qtd: {d["quantidade"]}' if "quantidade" in d else "")
-
-# Read de compras/favoritos: todos, ou só os do CPF informado.
-def listar_usuario_produto(colecao, cpf):
-    filtro = {}
-    if len(cpf):
-        u = db.usuario.find_one({"cpf": cpf})
-        if not u:
-            print("Usuário não encontrado.")
-            return
-        filtro = {"usuario_id": u["_id"]}
-    for x in com_nomes(colecao, filtro, JOINS_USUARIO_PRODUTO):
-        print(mostrar_usuario_produto(x))
-
-# Update/Delete de compras/favoritos: pede o CPF e deixa escolher um registro desse usuário.
-def escolher_do_usuario(colecao):
-    u = buscar_usuario_cpf()
-    if not u:
-        return None
-    return escolher(com_nomes(colecao, {"usuario_id": u["_id"]}, JOINS_USUARIO_PRODUTO), mostrar_usuario_produto)
-
 #===========================================================
+# CRUD (Usuário)
 #===========================================================
 
-#CRUD (Usuário) - Criar usuário
 def create_usuario():
     global db
     mycol = db.usuario
@@ -103,21 +77,18 @@ def create_usuario():
         cidade = input("Cidade: ")
         estado = input("Estado: ")
         cep = input("CEP: ")
-        endereco = {        #isso nao eh json, isso é chave-valor, eh um obj
-            "rua":rua,
-            "num": num,
-            "bairro": bairro,
-            "cidade": cidade,
-            "estado": estado,
-            "cep": cep
+        endereco = {
+            "rua": rua, "num": num, "bairro": bairro,
+            "cidade": cidade, "estado": estado, "cep": cep
         }
-        end.append(endereco) #estou inserindo na lista
-        key = input("Deseja cadastrar um novo endereço (S/N)? ")
-    mydoc = { "nome": nome, "sobrenome": sobrenome, "cpf": cpf, "end": end }
+        end.append(endereco)
+        key = input("Deseja cadastrar um novo endereço (S/N)? ").upper()
+    
+    # Inicializa o array "favoritos" vazio por padrão (Padrão de Mercado)
+    mydoc = { "nome": nome, "sobrenome": sobrenome, "cpf": cpf, "end": end, "favoritos": [] }
     x = mycol.insert_one(mydoc)
-    print("Documento inserido com ID ",x.inserted_id)
+    print("Documento inserido com ID ", x.inserted_id)
 
-#CRUD (Usuário) - Read usuário
 def read_usuario(nome):
     global db
     mycol = db.usuario
@@ -125,14 +96,13 @@ def read_usuario(nome):
     if not len(nome):
         mydoc = mycol.find().sort("nome")
         for x in mydoc:
-            print(x["nome"],x["cpf"])
+            print(x["nome"], x["cpf"])
     else:
         myquery = {"nome": nome}
         mydoc = mycol.find(myquery)
         for x in mydoc:
             print(x)
 
-#CRUD (Usuário) - Update usuário
 def update_usuario(nome):
     global db
     mycol = db.usuario
@@ -141,45 +111,44 @@ def update_usuario(nome):
     if not mydoc:
         print("Usuário não encontrado.")
         return
-    print("Dados do usuário: ",mydoc)
-    nome = input("Mudar Nome:")
-    if len(nome):
-        mydoc["nome"] = nome
+    print("Dados do usuário: ", mydoc)
+    novo_nome = input("Mudar Nome: ")
+    if len(novo_nome):
+        mydoc["nome"] = novo_nome
 
-    sobrenome = input("Mudar Sobrenome:")
-    if len(sobrenome):
-        mydoc["sobrenome"] = sobrenome
+    novo_sobrenome = input("Mudar Sobrenome: ")
+    if len(novo_sobrenome):
+        mydoc["sobrenome"] = novo_sobrenome
 
-    cpf = input("Mudar CPF:")
-    if len(cpf):
-        if mycol.find_one({"cpf": cpf, "_id": {"$ne": mydoc["_id"]}}):
+    novo_cpf = input("Mudar CPF: ")
+    if len(novo_cpf):
+        if mycol.find_one({"cpf": novo_cpf, "_id": {"$ne": mydoc["_id"]}}):
             print("Já existe outro usuário com esse CPF. CPF não alterado.")
         else:
-            mydoc["cpf"] = cpf
+            mydoc["cpf"] = novo_cpf
 
     newvalues = { "$set": mydoc }
     mycol.update_one(myquery, newvalues)
+    print("Usuário atualizado!")
 
-#CRUD (Usuário) - Delete usuário
 def delete_usuario(nome, sobrenome):
     global db
     mycol = db.usuario
-    myquery = {"nome": nome, "sobrenome":sobrenome}
+    myquery = {"nome": nome, "sobrenome": sobrenome}
     mydoc = mycol.delete_one(myquery)
-    print("Deletado o usuário ",mydoc)
-
+    print("Deletado o usuário. Quantidade removida: ", mydoc.deleted_count)
 
 #===========================================================
+# CRUD (Produto)
 #===========================================================
 
-#CRUD (Produto) - Criar Produto
 def create_produto():
     global db
     mycol = db.produto
     print("\nInserindo um novo produto")
     nome = input("Nome do produto: ")
     descricao = input("Descrição: ")
-    preco = input("Preço: ")
+    preco = float(input("Preço: ") or 0.0)
     print("Qual vendedor vende este produto?")
     vendedor = escolher(db.vendedor.find().sort("nome"), lambda v: f'{v["nome"]} ({v.get("loja", "")})')
     if not vendedor:
@@ -190,21 +159,19 @@ def create_produto():
     x = mycol.insert_one(mydoc)
     print("Produto inserido com ID ", x.inserted_id)
 
-#CRUD (Produto) - Read Produto    
 def read_produto(nome):
     global db
     mycol = db.produto
     print("Produtos existentes: ")
     if not len(nome):
         for x in sorted(com_nomes("produto", {}, [("vendedor_id", "vendedor")]), key=lambda p: p["nome"]):
-            print(x["nome"], "-", x.get("preco", "Sem preço"), "- Loja:", nome_ligado(x, "vendedor", "loja"))
+            print(f"{x['nome']} - R$ {x.get('preco', 'Sem preço')} - Loja: {nome_ligado(x, 'vendedor', 'loja')}")
     else:
         myquery = {"nome": nome}
         mydoc = mycol.find(myquery)
         for x in mydoc:
             print(x)        
 
-#CRUD (Produto) - Update Produto
 def update_produto(nome):
     global db
     mycol = db.produto
@@ -212,13 +179,13 @@ def update_produto(nome):
     mydoc = mycol.find_one(myquery)
     if mydoc: 
         print("Dados do produto: ", mydoc)
-        novo_nome = input("Mudar Nome do Produto (ou enter para pular):")
+        novo_nome = input("Mudar Nome do Produto (ou enter para pular): ")
         if len(novo_nome):
             mydoc["nome"] = novo_nome
 
-        novo_preco = input("Mudar Preço (ou entender para pular):")
+        novo_preco = input("Mudar Preço (ou enter para pular): ")
         if len(novo_preco):
-            mydoc["preco"] = novo_preco
+            mydoc["preco"] = float(novo_preco)
 
         newvalues = { "$set": mydoc }
         mycol.update_one(myquery, newvalues)
@@ -226,7 +193,6 @@ def update_produto(nome):
     else:
         print("Produto não encontrado.")            
 
-#CRUD (Produto) - Delete Produto    
 def delete_produto(nome):
     global db
     mycol = db.produto
@@ -235,13 +201,13 @@ def delete_produto(nome):
     print("Deletado o produto. Quantidade removida: ", mydoc.deleted_count)
     
 #===========================================================
+# CRUD (Vendedor)
 #===========================================================
 
-#CRUD (Vendedor) - Criar vendedor
 def create_vendedor():
     global db
     mycol = db.vendedor
-    print("\nIserindo um novo vendedor")
+    print("\nInserindo um novo vendedor")
     nome = input("Nome do vendedor/responsável: ")
     cnpj = input("CNPJ ou CPF: ")
     loja = input("Nome da loja: ")
@@ -250,22 +216,20 @@ def create_vendedor():
     x = mycol.insert_one(mydoc)
     print("Vendedor inserido com ID ", x.inserted_id)
 
-#CRUD (Vendedor) - Read vendedor 
 def read_vendedor(nome):
     global db
     mycol = db.vendedor
-    print("Vendedor existentes: ")
+    print("Vendedores existentes: ")
     if not len(nome):
         mydoc = mycol.find().sort("nome")
         for x in mydoc:
-            print(x["nome"],"-",x.get("loja", "Sem loja vinculada"))
+            print(x["nome"], "-", x.get("loja", "Sem loja vinculada"))
     else:
         myquery = {"nome": nome}
         mydoc = mycol.find(myquery)
         for x in mydoc:
             print(x)    
 
-#CRUD (Vendedor) - Update vendedor
 def update_vendedor(nome):
     global db
     mycol = db.vendedor
@@ -273,11 +237,11 @@ def update_vendedor(nome):
     mydoc = mycol.find_one(myquery)
     if mydoc:
         print("Dados do vendedor: ", mydoc)
-        novo_nome = input("Mudar nome do vendedor (ou enter para pular)")
+        novo_nome = input("Mudar nome do vendedor (ou enter para pular): ")
         if len(novo_nome):
             mydoc["nome"] = novo_nome
 
-        nova_loja = input("Mudar nome da Loja (ou enter para pular):")
+        nova_loja = input("Mudar nome da Loja (ou enter para pular): ")
         if len(nova_loja):
             mydoc["loja"] = nova_loja
 
@@ -287,18 +251,17 @@ def update_vendedor(nome):
     else:
         print("Vendedor não encontrado.")          
 
-#CRUD (Vendedor) - Delete vendedor
 def delete_vendedor(nome):
     global db
     mycol = db.vendedor
     myquery = {"nome": nome}
     mydoc = mycol.delete_one(myquery)
-    print("Deletado o vendedor. Quantidade removida ", mydoc.deleted_count)     
+    print("Deletado o vendedor. Quantidade removida: ", mydoc.deleted_count)    
 
 #===========================================================
+# CRUD (Compras - Com Snapshot Histórico)
 #===========================================================
 
-#CRUD (Compras) - Criar compra
 def create_compra():
     global db
     mycol = db.compras
@@ -309,57 +272,84 @@ def create_compra():
     produto = escolher_produto()
     if not produto:
         return
-    quantidade = input("Quantidade: ")
+    quantidade = int(input("Quantidade: ") or 1)
 
-    mydoc = { "usuario_id": usuario["_id"], "produto_id": produto["_id"], "quantidade": quantidade }
+    # Salvando um Snapshot do produto no momento da compra 
+    mydoc = {
+        "usuario_id": usuario["_id"],
+        "quantidade": quantidade,
+        "data_compra": datetime.utcnow(),
+        "produto_snapshot": {
+            "produto_id": produto["_id"],
+            "nome": produto["nome"],
+            "preco": produto.get("preco", 0.0)
+        }
+    }
     x = mycol.insert_one(mydoc)
     print("Compra inserida com ID", x.inserted_id)
 
-#CRUD (Compras) - Read compra
 def read_compra(cpf):
+    global db
     print("Compras existentes: ")
-    listar_usuario_produto("compras", cpf)
+    filtro = {}
+    if len(cpf):
+        u = db.usuario.find_one({"cpf": cpf})
+        if not u:
+            print("Usuário não encontrado.")
+            return
+        filtro = {"usuario_id": u["_id"]}
+    
+    # Traz as compras cruzando apenas com o usuário para exibir o nome dele
+    pipeline = [{"$match": filtro}]
+    pipeline.append({"$lookup": {"from": "usuario", "localField": "usuario_id", "foreignField": "_id", "as": "usuario"}})
+    
+    compras = list(db.compras.aggregate(pipeline))
+    if not compras:
+        print("Nenhuma compra encontrada.")
+        return
+        
+    for c in compras:
+        nome_cli = c["usuario"][0]["nome"] if c.get("usuario") else "(removido)"
+        prod = c.get("produto_snapshot", {})
+        print(f"Cliente: {nome_cli} | Produto: {prod.get('nome')} | Preço Pago: R$ {prod.get('preco')} | Qtd: {c['quantidade']}")
 
-#CRUD (Compras) - Update compra
 def update_compra():
     global db
-    mycol = db.compras
-    compra = escolher_do_usuario("compras")
-    if not compra:
+    u = buscar_usuario_cpf()
+    if not u:
         return
-    novos = {}
-    if input("Mudar Produto (S/N)? ").upper() == 'S':
-        produto = escolher_produto()
-        if produto:
-            novos["produto_id"] = produto["_id"]
-
-    nova_qtd = input("Mudar Quantidade (ou enter para pular):")
+    compras_usuario = list(db.compras.find({"usuario_id": u["_id"]}))
+    compra_escolhida = escolher(compras_usuario, lambda c: f"Produto: {c['produto_snapshot']['nome']} - Qtd: {c['quantidade']}")
+    if not compra_escolhida:
+        return
+        
+    nova_qtd = input("Mudar Quantidade (ou enter para pular): ")
     if len(nova_qtd):
-        novos["quantidade"] = nova_qtd
-
-    if novos:
-        mycol.update_one({"_id": compra["_id"]}, {"$set": novos})
+        db.compras.update_one({"_id": compra_escolhida["_id"]}, {"$set": {"quantidade": int(nova_qtd)}})
         print("Compra atualizada!")
     else:
         print("Nada foi alterado.")
 
-#CRUD (Compras) - Delete compra
 def delete_compra():
     global db
-    mycol = db.compras
-    compra = escolher_do_usuario("compras")
-    if compra:
-        mydoc = mycol.delete_one({"_id": compra["_id"]})
-        print("Deletada a compra. Quantidade removida: ", mydoc.deleted_count)
+    u = buscar_usuario_cpf()
+    if not u:
+        return
+    compras_usuario = list(db.compras.find({"usuario_id": u["_id"]}))
+    compra_escolhida = escolher(compras_usuario, lambda c: f"Produto: {c['produto_snapshot']['nome']} - Qtd: {c['quantidade']}")
+    if not compra_escolhida:
+        return
+        
+    mydoc = db.compras.delete_one({"_id": compra_escolhida["_id"]})
+    print("Deletada a compra. Quantidade removida: ", mydoc.deleted_count)
 
 #===========================================================
+# CRUD (Favoritos - Padrão Embutido no Usuário)
 #===========================================================
 
-#CRUD (Favoritos) - Criar favorito
 def create_favorito():
     global db
-    mycol = db.favoritos
-    print("\nInserindo um novo favorito")
+    print("\nAdicionando produto aos favoritos")
     usuario = buscar_usuario_cpf()
     if not usuario:
         return
@@ -367,37 +357,70 @@ def create_favorito():
     if not produto:
         return
 
-    mydoc = { "usuario_id": usuario["_id"], "produto_id": produto["_id"] }
-    x = mycol.insert_one(mydoc)
-    print("Favorito inserido com ID ", x.inserted_id)
+    # $addToSet insere o ID no array do usuário evitando duplicadas
+    resultado = db.usuario.update_one(
+        {"_id": usuario["_id"]},
+        {"$addToSet": {"favoritos": produto["_id"]}}
+    )
+    
+    if resultado.modified_count > 0:
+        print("Produto adicionado aos favoritos com sucesso!")
+    else:
+        print("Este produto já está na lista de favoritos do usuário.")
 
-#CRUD (Favoritos) - Read favorito
 def read_favorito(cpf):
-    print("Favoritos existentes: ")
-    listar_usuario_produto("favoritos", cpf)
-
-#CRUD (Favoritos) - Update favorito
-def update_favorito():
     global db
-    mycol = db.favoritos
-    favorito = escolher_do_usuario("favoritos")
-    if not favorito:
+    print("Favoritos existentes: ")
+    if not len(cpf):
+        print("Para listar favoritos, informe o CPF do usuário.")
         return
-    produto = escolher_produto()
-    if produto:
-        mycol.update_one({"_id": favorito["_id"]}, {"$set": {"produto_id": produto["_id"]}})
-        print("Favorito atualizado!")
+    
+    u = db.usuario.find_one({"cpf": cpf})
+    if not u:
+        print("Usuário não encontrado.")
+        return
+    
+    produto_ids = u.get("favoritos", [])
+    if not produto_ids:
+        print("O usuário não possui produtos favoritos.")
+        return
+    
+    # Busca os produtos cujos IDs estão dentro do array do usuário
+    produtos = db.produto.find({"_id": {"$in": produto_ids}})
+    print(f"\nFavoritos de {u['nome']}:")
+    for x in produtos:
+        print(f"- {x['nome']} | Preço: R$ {x.get('preco', 'Sem preço')}")
 
-#CRUD (Favoritos) - Delete favorito
+def update_favorito():
+    print("No modelo embutido, utilize Adicionar (1) ou Deletar (4) para gerenciar favoritos.")
+
 def delete_favorito():
     global db
-    mycol = db.favoritos
-    favorito = escolher_do_usuario("favoritos")
-    if favorito:
-        mydoc = mycol.delete_one({"_id": favorito["_id"]})
-        print("Deletado o favorito. Quantidade removida: ", mydoc.deleted_count)
+    usuario = buscar_usuario_cpf()
+    if not usuario:
+        return
+    
+    produto_ids = usuario.get("favoritos", [])
+    if not produto_ids:
+        print("O usuário não possui favoritos cadastrados.")
+        return
+    
+    produtos_favoritos = list(db.produto.find({"_id": {"$in": produto_ids}}))
+    produto_escolhido = escolher(produtos_favoritos, lambda p: f'{p["nome"]} - R$ {p.get("preco", "")}')
+    
+    if not produto_escolhido:
+        return
+    
+    # $pull remove o ID do produto do array do usuário de forma limpa
+    db.usuario.update_one(
+        {"_id": usuario["_id"]},
+        {"$pull": {"favoritos": produto_escolhido["_id"]}}
+    )
+    print("Produto removido dos favoritos!")
 
-
+#===========================================================
+# MENU PRINCIPAL (CLI)
+#===========================================================
 
 key = 0
 sub = 0
@@ -407,7 +430,7 @@ while (key != 'S'):
     print("3-CRUD Produto")
     print("4-CRUD Compras")
     print("5-CRUD Favoritos")
-    key = input("Digite a opção desejada? (S para sair) ")
+    key = input("Digite a opção desejada? (S para sair) ").upper()
 
     if (key == '1'):
         print("=======Menu do Usuário=======")
@@ -417,19 +440,14 @@ while (key != 'S'):
         print("4-Delete Usuário")
         sub = input("Digite a opção desejada? (V para voltar) ")
         if (sub == '1'):
-            print("Create usuario")
             create_usuario()
-            
         elif (sub == '2'):
-            nome = input("Read usuário, deseja algum nome especifico? ")
+            nome = input("Read usuário, deseja algum nome específico? (Enter para todos): ")
             read_usuario(nome)
-        
         elif (sub == '3'):
-            nome = input("Update usuário, deseja algum nome especifico? ")
+            nome = input("Update usuário, digite o nome do usuário: ")
             update_usuario(nome)
-
         elif (sub == '4'):
-            print("delete usuario")
             nome = input("Nome a ser deletado: ")
             sobrenome = input("Sobrenome a ser deletado: ")
             delete_usuario(nome, sobrenome)
@@ -445,7 +463,7 @@ while (key != 'S'):
         if (sub == '1'):
             create_vendedor()
         elif (sub == '2'):
-            nome = input("Read vendedor, deseja algum nome específico (Enter para todos)")
+            nome = input("Read vendedor, deseja algum nome específico (Enter para todos): ")
             read_vendedor(nome)
         elif (sub == '3'):
             nome = input("Update vendedor, digite o nome atual do vendedor: ")
@@ -465,7 +483,7 @@ while (key != 'S'):
         if (sub == '1'):
             create_produto()
         elif (sub == '2'):
-            nome = input("Read produto, deseja algum nome específico? (Enter para todos)")
+            nome = input("Read produto, deseja algum nome específico? (Enter para todos): ")
             read_produto(nome)
         elif (sub == '3'):
             nome = input("Update produto, digite o nome atual do produto: ")
@@ -508,7 +526,6 @@ while (key != 'S'):
         elif (sub == '3'):
             update_favorito()
         elif (sub == '4'):
-            delete_favorito()                      
+            delete_favorito()                     
 
 print("Tchau Prof...")
-
