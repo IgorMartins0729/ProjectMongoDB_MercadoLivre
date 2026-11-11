@@ -17,7 +17,7 @@ client = MongoClient(uri, server_api=ServerApi('1'))
 global db
 db = client.mercadolivre
 
-# Busca o usuário pelo CPF (único). Devolve o documento ou None.
+# Busca o usuário pelo CPF (único). 
 def buscar_usuario_cpf():
     cpf = input("CPF do usuário: ")
     u = db.usuario.find_one({"cpf": cpf})
@@ -25,7 +25,7 @@ def buscar_usuario_cpf():
         print("Usuário não encontrado.")
     return u
 
-# Mostra uma lista numerada e devolve o documento escolhido (ou None).
+# Mostra uma lista numerada e devolve o documento escolhido
 def escolher(docs, mostrar):
     docs = list(docs)
     if not docs:
@@ -43,7 +43,7 @@ def escolher_produto():
     print("Escolha o produto:")
     return escolher(db.produto.find().sort("nome"), lambda p: f'{p["nome"]} - R$ {p.get("preco", "")}')
 
-# Lista uma coleção trazendo os documentos ligados pelo _id (ex: Vendedor do produto)
+# Lista uma coleção trazendo os documentos ligados pelo _id
 def com_nomes(colecao, filtro, joins):
     pipeline = [{"$match": filtro}]
     for campo, origem in joins:
@@ -84,7 +84,7 @@ def create_usuario():
         end.append(endereco)
         key = input("Deseja cadastrar um novo endereço (S/N)? ").upper()
     
-    # Inicializa o array "favoritos" vazio por padrão (Padrão de Mercado)
+    # Inicializa o array "favoritos" vazio por padrão 
     mydoc = { "nome": nome, "sobrenome": sobrenome, "cpf": cpf, "end": end, "favoritos": [] }
     x = mycol.insert_one(mydoc)
     print("Documento inserido com ID ", x.inserted_id)
@@ -330,21 +330,30 @@ def update_compra():
     else:
         print("Nada foi alterado.")
 
-def delete_compra():
+def delete_favorito():
     global db
-    u = buscar_usuario_cpf()
-    if not u:
+    usuario = buscar_usuario_cpf()
+    if not usuario:
         return
-    compras_usuario = list(db.compras.find({"usuario_id": u["_id"]}))
-    compra_escolhida = escolher(compras_usuario, lambda c: f"Produto: {c['produto_snapshot']['nome']} - Qtd: {c['quantidade']}")
-    if not compra_escolhida:
+
+    favoritos = usuario.get("favoritos", [])
+    if not favoritos:
+        print("O usuário não possui favoritos cadastrados.")
         return
-        
-    mydoc = db.compras.delete_one({"_id": compra_escolhida["_id"]})
-    print("Deletada a compra. Quantidade removida: ", mydoc.deleted_count)
+
+    escolhido = escolher(favoritos, lambda f: f'{f["nome"]} - R$ {f.get("preco", "")}')
+    if not escolhido:
+        return
+
+    # $pull remove do array o subdocumento cujo produto_id bate
+    db.usuario.update_one(
+        {"_id": usuario["_id"]},
+        {"$pull": {"favoritos": {"produto_id": escolhido["produto_id"]}}}
+    )
+    print("Produto removido dos favoritos!")
 
 #===========================================================
-# CRUD (Favoritos - Padrão Embutido no Usuário)
+# CRUD (Favoritos)
 #===========================================================
 
 def create_favorito():
@@ -357,16 +366,23 @@ def create_favorito():
     if not produto:
         return
 
-    # $addToSet insere o ID no array do usuário evitando duplicadas
-    resultado = db.usuario.update_one(
-        {"_id": usuario["_id"]},
-        {"$addToSet": {"favoritos": produto["_id"]}}
-    )
-    
-    if resultado.modified_count > 0:
-        print("Produto adicionado aos favoritos com sucesso!")
-    else:
+
+    if db.usuario.find_one({"_id": usuario["_id"], "favoritos.produto_id": produto["_id"]}):
         print("Este produto já está na lista de favoritos do usuário.")
+        return
+
+    favorito = {
+        "produto_id": produto["_id"],
+        "nome": produto["nome"],
+        "descricao": produto.get("descricao", ""),
+        "preco": produto.get("preco", 0.0)
+    }
+
+    db.usuario.update_one(
+        {"_id": usuario["_id"]},
+        {"$push": {"favoritos": favorito}}
+    )
+    print("Produto adicionado aos favoritos com sucesso!")
 
 def read_favorito(cpf):
     global db
@@ -380,16 +396,14 @@ def read_favorito(cpf):
         print("Usuário não encontrado.")
         return
     
-    produto_ids = u.get("favoritos", [])
-    if not produto_ids:
+    favoritos = u.get("favoritos", [])
+    if not favoritos:
         print("O usuário não possui produtos favoritos.")
         return
-    
-    # Busca os produtos cujos IDs estão dentro do array do usuário
-    produtos = db.produto.find({"_id": {"$in": produto_ids}})
+
     print(f"\nFavoritos de {u['nome']}:")
-    for x in produtos:
-        print(f"- {x['nome']} | Preço: R$ {x.get('preco', 'Sem preço')}")
+    for f in favoritos:
+        print(f"- {f['nome']} | {f.get('descricao', '')} | R$ {f.get('preco', 'Sem preço')}")
 
 def update_favorito():
     print("No modelo embutido, utilize Adicionar (1) ou Deletar (4) para gerenciar favoritos.")
@@ -405,11 +419,15 @@ def delete_favorito():
         print("O usuário não possui favoritos cadastrados.")
         return
     
-    produtos_favoritos = list(db.produto.find({"_id": {"$in": produto_ids}}))
-    produto_escolhido = escolher(produtos_favoritos, lambda p: f'{p["nome"]} - R$ {p.get("preco", "")}')
-    
-    if not produto_escolhido:
+    escolhido = escolher(favoritos, lambda f: f'{f["nome"]} - R$ {f.get("preco", "")}')
+    if not escolhido:
         return
+
+    db.usuario.update_one(
+        {"_id": usuario["_id"]},
+        {"$pull": {"favoritos": {"produto_id": escolhido["produto_id"]}}}
+    )
+    print("Produto removido dos favoritos!")
     
     # $pull remove o ID do produto do array do usuário de forma limpa
     db.usuario.update_one(
